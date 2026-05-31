@@ -29,44 +29,74 @@ st.markdown("""
         border-left: 5px solid #0d2a3f;
         margin-bottom: 20px;
     }
-    .official-box {
-        background-color: #e8f4f8;
-        padding: 20px;
+    .answer-card {
+        padding: 16px;
         border-radius: 10px;
-        border-left: 5px solid #1f77b4;
-        margin: 20px 0;
+        margin-bottom: 8px;
     }
+    .gold-card { background-color: #e8f5ee; border-left: 5px solid #2a7a4f; }
+    .base-card { background-color: #fefce8; border-left: 5px solid #d97706; }
+    .post-card { background-color: #e8f0fa; border-left: 5px solid #1a4a6e; }
 </style>
 """, unsafe_allow_html=True)
 
 MODEL_DIR     = "Model/qa_gelectra_v2"
 DATASET_SPLIT = "test"
 
+# Feste Werte (nicht mehr über Sidebar verstellbar)
+N_BEST_SIZE       = 30
+MAX_ANSWER_LENGTH = 50
+
 # -----------------------------
-# Erklärungen (Glossar & Metriken)
+# Erklärungen: Gold / Base / Post
 # -----------------------------
 def render_explanations():
     st.title("🔍 Analyse & Evaluation")
 
-    col_a, col_b = st.columns(2)
+    st.markdown("### Die drei Antworten im Vergleich")
+    st.write("""
+    In der Demo siehst du zu jeder Frage drei Antworten. Sie haben unterschiedliche Rollen:
+    """)
+
+    col_a, col_b, col_c = st.columns(3)
+
     with col_a:
-        st.markdown("### Pipeline-Schritte (Vorbereitung)")
-        st.info("""
-        Bevor das Modell die Antwort findet, durchläuft der Text diese Schritte:
-        * **Tokenization:** Zerlegung des Textes in Zahlenwerte (Tokens).
-        * **Lowercasing:** Umwandlung in Kleinschreibung zur Normalisierung.
-        * **Embedding:** Umwandlung der Tokens in mathematische Vektoren (Zahlenräume).
-        * **Stemming (optional):** Reduktion von Wörtern auf ihren Stamm.
-        """)
+        st.markdown("""
+        <div class="answer-card gold-card">
+        <strong>🥇 Gold (Referenz)</strong><br><br>
+        Die <strong>korrekte Antwort</strong> aus dem GermanQuAD-Datensatz — von Menschen
+        festgelegt. Sie ist der Maßstab, an dem die Vorhersagen gemessen werden.
+        </div>
+        """, unsafe_allow_html=True)
 
     with col_b:
-        st.markdown("### Bewertungs-Metriken")
-        st.info("""
-        Wie messen wir Erfolg? In dieser Demo nutzen wir:
-        * **Exact Match (EM):** Ist die Antwort zu 100% identisch mit der Gold-Antwort?
-        * **F1-Score:** Misst die Wort-Überlappung zwischen Modell und Gold.
-        * *Warum keine anderen?* Metriken wie ROUGE oder BLEU sind für freie Texte (Generierung) gedacht. In der extraktiven QA zählt nur die exakte Spanne.
-        """)
+        st.markdown("""
+        <div class="answer-card base-card">
+        <strong>🤖 Base (einfach)</strong><br><br>
+        Die <strong>einfachste Vorhersage</strong>: Das Modell nimmt direkt den Token mit dem
+        höchsten Start-Wert und den mit dem höchsten End-Wert (argmax). Schnell, aber an den
+        Rändern manchmal ungenau.
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_c:
+        st.markdown("""
+        <div class="answer-card post-card">
+        <strong>✨ Post (optimiert)</strong><br><br>
+        Die <strong>verfeinerte Vorhersage</strong>: Statt nur den höchsten Wert zu nehmen,
+        prüft Post die besten Kandidaten und wählt die plausibelste gültige Antwortspanne.
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("### Was bedeutet n_best_size?")
+    st.info("""
+    **n_best_size** ist die Anzahl der Kandidaten, die die **Post-Methode** prüft.
+
+    * **Base** nimmt nur die *eine* beste Start- und End-Position (Top-1, argmax) — dafür braucht es kein n_best_size.
+    * **Post** betrachtet die besten *n* Start- und End-Positionen (z. B. die Top-30) und prüft alle gültigen Kombinationen. So findet das Modell auch dann die richtige Spanne, wenn die einfache Top-1-Wahl danebenliegt.
+
+    In diesem Projekt ist n_best_size fest auf **30** gesetzt. Interessant: Beim finalen Modell bringt Post kaum noch einen Vorteil gegenüber Base — das Training war präzise genug, dass die aufwändige n-best-Suche überflüssig wird.
+    """)
 
 # -----------------------------
 # Modell & Daten laden
@@ -117,30 +147,23 @@ def f1_score(pred: str, gold: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 # -----------------------------
-# UI: Sidebar
+# UI: Sidebar (nur max_seq_length und doc_stride)
 # -----------------------------
 st.sidebar.header("⚙️ Modell-Parameter")
 
-n_best_size = st.sidebar.slider(
-    "n_best_size", 5, 60, 30, 5,
-    help="Anzahl der Kandidaten für Start- und End-Tokens."
-)
-max_answer_length = st.sidebar.slider(
-    "max_answer_length", 10, 120, 50, 5,
-    help="Maximale Länge der extrahierten Antwort."
-)
 max_seq_length = st.sidebar.selectbox(
     "max_seq_length", [256, 384, 512], 2,
-    help="Maximale Eingabelänge für das Modell."
+    help="Maximale Eingabelänge für das Modell (Anzahl Tokens)."
 )
 doc_stride = st.sidebar.selectbox(
     "doc_stride", [64, 128, 192, 256], 1,
-    help="Überlappung zwischen den Text-Chunks."
+    help="Überlappung zwischen den Text-Chunks beim Sliding Window."
 )
+
 # -----------------------------
 # Automatische Neuberechnung bei Parameter-Änderung
 # -----------------------------
-current_params = (n_best_size, max_answer_length, max_seq_length, doc_stride)
+current_params = (max_seq_length, doc_stride)
 
 if "last_params" not in st.session_state:
     st.session_state.last_params = current_params
@@ -148,6 +171,7 @@ if "last_params" not in st.session_state:
 if current_params != st.session_state.last_params:
     st.session_state.last_params = current_params
     st.rerun()
+
 # -----------------------------
 # Hauptseite
 # -----------------------------
@@ -199,7 +223,7 @@ for idx in st.session_state.indices:
     res = predict_gold_base_post(
         tokenizer, model, device,
         question, context, gold_text,
-        n_best_size, max_answer_length, max_seq_length, doc_stride
+        N_BEST_SIZE, MAX_ANSWER_LENGTH, max_seq_length, doc_stride
     )
     results.append((idx, ex, res))
 
