@@ -2,9 +2,9 @@
   "version": "1.0",
   "truncation": {
     "direction": "Right",
-    "max_length": 384,
+    "max_length": 512,
     "strategy": "OnlySecond",
-    "stride": 128
+    "stride": 0
   },
   "padding": null,
   "added_tokens": [

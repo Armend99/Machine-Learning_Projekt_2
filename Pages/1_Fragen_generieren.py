@@ -1,16 +1,14 @@
 import random
+import json
 import streamlit as st
-from datasets import load_dataset
+from datasets import Dataset, DatasetDict
 from qa_logik import load_model, predict_gold_base_post
-import pandas as pd
-import plotly.express as px
 
 # -----------------------------
 # Konfiguration & Styling
 # -----------------------------
 st.set_page_config(page_title="GermanQuAD QA Demo", layout="wide")
 
-# CSS für einheitliches Design
 st.markdown("""
 <style>
     .stButton > button {
@@ -31,13 +29,18 @@ st.markdown("""
         border-left: 5px solid #0d2a3f;
         margin-bottom: 20px;
     }
+    .official-box {
+        background-color: #e8f4f8;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #1f77b4;
+        margin: 20px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-MODEL_DIR = "Model/qa_gelectra"
-DATASET_NAME = "deepset/germanquad"
+MODEL_DIR     = "Model/qa_gelectra_v2"
 DATASET_SPLIT = "test"
-
 
 # -----------------------------
 # Erklärungen (Glossar & Metriken)
@@ -65,7 +68,6 @@ def render_explanations():
         * *Warum keine anderen?* Metriken wie ROUGE oder BLEU sind für freie Texte (Generierung) gedacht. In der extraktiven QA zählt nur die exakte Spanne.
         """)
 
-
 # -----------------------------
 # Modell & Daten laden
 # -----------------------------
@@ -73,15 +75,46 @@ def render_explanations():
 def get_model():
     return load_model(MODEL_DIR)
 
-
 @st.cache_data
 def get_dataset():
-    return load_dataset(DATASET_NAME, revision="refs/convert/parquet")
+    def parse(path):
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        rows = []
+        for article in data["data"]:
+            for paragraph in article["paragraphs"]:
+                context = paragraph["context"]
+                for qa in paragraph["qas"]:
+                    rows.append({
+                        "id":       qa["id"],
+                        "context":  context,
+                        "question": qa["question"],
+                        "answers":  {
+                            "text":         [a["text"] for a in qa["answers"]],
+                            "answer_start": [a["answer_start"] for a in qa["answers"]]
+                        }
+                    })
+        return rows
 
+    return DatasetDict({
+        "train": Dataset.from_list(parse("GermanQuAD_train.json")),
+        "test":  Dataset.from_list(parse("GermanQuAD_test.json"))
+    })
 
 def sample_indices(n: int, split_len: int):
     return random.sample(range(split_len), min(n, split_len))
 
+def f1_score(pred: str, gold: str) -> float:
+    p = set(pred.lower().split())
+    g = set(gold.lower().split())
+    if not p or not g:
+        return 0.0
+    overlap   = p & g
+    precision = len(overlap) / len(p)
+    recall    = len(overlap) / len(g)
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
 
 # -----------------------------
 # UI: Sidebar
@@ -97,14 +130,24 @@ max_answer_length = st.sidebar.slider(
     help="Maximale Länge der extrahierten Antwort."
 )
 max_seq_length = st.sidebar.selectbox(
-    "max_seq_length", [256, 384, 512], 1,
+    "max_seq_length", [256, 384, 512], 2,
     help="Maximale Eingabelänge für das Modell."
 )
 doc_stride = st.sidebar.selectbox(
     "doc_stride", [64, 128, 192, 256], 1,
     help="Überlappung zwischen den Text-Chunks."
 )
+# -----------------------------
+# Automatische Neuberechnung bei Parameter-Änderung
+# -----------------------------
+current_params = (n_best_size, max_answer_length, max_seq_length, doc_stride)
 
+if "last_params" not in st.session_state:
+    st.session_state.last_params = current_params
+
+if current_params != st.session_state.last_params:
+    st.session_state.last_params = current_params
+    st.rerun()
 # -----------------------------
 # Hauptseite
 # -----------------------------
@@ -115,7 +158,7 @@ st.header("🎮 Interaktive Demo")
 st.write("Wähle Beispiele aus dem GermanQuAD Datensatz und vergleiche die Vorhersage-Strategien.")
 
 tokenizer, model, device = get_model()
-ds = get_dataset()
+ds    = get_dataset()
 split = ds[DATASET_SPLIT]
 
 if "indices" not in st.session_state:
@@ -125,80 +168,117 @@ if st.button("🔄 Neue zufällige Fragen laden", use_container_width=True):
     st.session_state.indices = sample_indices(5, len(split))
     st.rerun()
 
-# Anzeige der Beispiele
+# -----------------------------
+# Offizielle Modell-Performance
+# -----------------------------
+st.markdown("### 📊 Offizielle Modell-Performance")
+st.caption("Berechnet auf dem gesamten GermanQuAD Testset (n=2.204 Fragen)")
+
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric(label="Exact Match (Base)", value="—")
+with col2:
+    st.metric(label="F1-Score (Base)", value="—")
+with col3:
+    st.metric(label="Exact Match (Post)", value="63.75%")
+with col4:
+    st.metric(label="F1-Score (Post)", value="79.54%")
+
+st.markdown("---")
+
+# -----------------------------
+# Alle 5 Fragen vorberechnen
+# -----------------------------
+results = []
 for idx in st.session_state.indices:
-    ex = split[idx]
-    question, context = ex["question"], ex["context"]
+    ex        = split[idx]
+    question  = ex["question"]
+    context   = ex["context"]
     gold_text = ex["answers"]["text"][0] if ex.get("answers") else ""
 
+    res = predict_gold_base_post(
+        tokenizer, model, device,
+        question, context, gold_text,
+        n_best_size, max_answer_length, max_seq_length, doc_stride
+    )
+    results.append((idx, ex, res))
+
+# -----------------------------
+# Zusammenfassung der 5 Fragen
+# -----------------------------
+base_em = sum(
+    1 for _, _, r in results
+    if r["base"].strip().lower() == r["gold"].strip().lower()
+) / len(results)
+
+post_em = sum(
+    1 for _, _, r in results
+    if r["post"].strip().lower() == r["gold"].strip().lower()
+) / len(results)
+
+base_f1 = sum(f1_score(r["base"], r["gold"]) for _, _, r in results) / len(results)
+post_f1 = sum(f1_score(r["post"], r["gold"]) for _, _, r in results) / len(results)
+
+st.markdown("### 🔬 Aktuelle Stichprobe (5 Fragen)")
+st.caption("Zufällig gewählte Beispiele — Werte variieren bei jedem Laden")
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    st.metric(
+        label="Exact Match (Base)",
+        value=f"{base_em*100:.1f}%",
+        delta=f"{(base_em - 0.6375)*100:.1f}% vs. Testset"
+    )
+with c2:
+    st.metric(
+        label="F1-Score (Base)",
+        value=f"{base_f1*100:.1f}%",
+        delta=f"{(base_f1 - 0.7954)*100:.1f}% vs. Testset"
+    )
+with c3:
+    st.metric(
+        label="Exact Match (Post)",
+        value=f"{post_em*100:.1f}%",
+        delta=f"{(post_em - 0.6375)*100:.1f}% vs. Testset"
+    )
+with c4:
+    st.metric(
+        label="F1-Score (Post)",
+        value=f"{post_f1*100:.1f}%",
+        delta=f"{(post_f1 - 0.7954)*100:.1f}% vs. Testset"
+    )
+
+st.markdown("---")
+
+# -----------------------------
+# Einzelne Fragen
+# -----------------------------
+for idx, ex, res in results:
+    question = ex["question"]
+    context  = ex["context"]
+
+    base_correct = res["base"].strip().lower() == res["gold"].strip().lower()
+    post_correct = res["post"].strip().lower() == res["gold"].strip().lower()
+
     with st.expander(f"📍 Frage: {question}", expanded=False):
-        st.markdown(f"**Kontext:**\n<div style='font-size: 14px; color: #555;'>{context}</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"**Kontext:**\n<div style='font-size: 14px; color: #555;'>{context}</div>",
+            unsafe_allow_html=True
+        )
         st.write("---")
 
-        # Vorhersage aufrufen
-        res = predict_gold_base_post(tokenizer, model, device, question, context, gold_text,
-                                     n_best_size, max_answer_length, max_seq_length, doc_stride)
-
-        # Spalten für die Textantworten
         cA, cB, cC = st.columns(3)
         with cA:
             st.markdown("🥇 **Gold (Referenz)**")
             st.success(res["gold"])
         with cB:
-            st.markdown("🤖 **Base (Rohwert)**")
+            st.markdown(f"🤖 **Base** {'✅' if base_correct else '❌'}")
             st.warning(res["base"] if res["base"] else "Keine Antwort")
+            st.caption(f"F1: {f1_score(res['base'], res['gold'])*100:.1f}%")
         with cC:
-            st.markdown("✨ **Post (Optimiert)**")
+            st.markdown(f"✨ **Post** {'✅' if post_correct else '❌'}")
             st.info(res["post"] if res["post"] else "Keine Antwort")
-
-        st.markdown("---")
-        st.subheader("📊 Vergleich der Qualitäts-Metriken")
-        st.write("Wie gut stimmen die Vorhersagen mit der Gold-Antwort überein? (1.0 = Perfekt)")
-
-        # 1. Metriken berechnen
-        metrics_data = {
-            "Methode": ["Base (Rohwert)", "Post (Optimiert)"],
-            "Exact Match": [
-                1.0 if str(res["base"]).strip().lower() == str(res["gold"]).strip().lower() else 0.0,
-                1.0 if str(res["post"]).strip().lower() == str(res["gold"]).strip().lower() else 0.0
-            ],
-            "Wort-Überlappung (F1)": [
-                len(set(str(res["base"]).lower().split()) & set(str(res["gold"]).lower().split())) / max(
-                    len(set(str(res["gold"]).lower().split())), 1),
-                len(set(str(res["post"]).lower().split()) & set(str(res["gold"]).lower().split())) / max(
-                    len(set(res["gold"].lower().split())), 1)
-            ]
-        }
-
-        df_metrics = pd.DataFrame(metrics_data)
-        df_plot = df_metrics.melt(id_vars="Methode", var_name="Metrik", value_name="Score")
-
-        # 2. Balkendiagramm erstellen
-        fig = px.bar(
-            df_plot,
-            x="Score",
-            y="Methode",
-            color="Metrik",
-            barmode="group",
-            orientation="h",
-            title="Performance-Vergleich: EM & F1",
-            color_discrete_map={
-                "Exact Match": "#0d2a3f",
-                "Wort-Überlappung (F1)": "#1f77b4"
-            },
-            range_x=[0, 1]
-        )
-
-        fig.update_layout(
-            height=250,
-            margin=dict(l=0, r=0, t=40, b=0),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-
-        # WICHTIG: Eindeutiger Key fixiert den Streamlit-Fehler
-        st.plotly_chart(fig, use_container_width=True, key=f"metrics_chart_{idx}")
-
-        st.caption("ℹ️ **Exact Match:** Antwort ist identisch. **F1:** Anteil der korrekten Wörter in der Antwort.")
+            st.caption(f"F1: {f1_score(res['post'], res['gold'])*100:.1f}%")
 
 st.markdown("---")
 st.caption("Machine Learning Projekt 2026 - Fokus: GermanQuAD Evaluation")

@@ -1,0 +1,17 @@
+# Altes Modell komplett ausschließen (veraltet)
+Model/qa_gelectra/
+
+# Neues Modell: nur die große Gewichtsdatei ausschließen
+Model/qa_gelectra_v2/model.safetensors
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.idea/
+
+# ngrok / Demo
+qr_code.png

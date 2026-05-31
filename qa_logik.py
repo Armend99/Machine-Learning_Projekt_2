@@ -11,7 +11,7 @@ def load_model(model_dir: str):
     model.eval()
     return tokenizer, model, device
 
-def _prepare(tokenizer, question, context, max_seq_length=384, doc_stride=128):
+def _prepare(tokenizer, question, context, max_seq_length=512, doc_stride=128):
     tok = tokenizer(
         question,
         context,
@@ -36,7 +36,7 @@ def predict_gold_base_post(
     tokenizer, model, device,
     question, context, gold_text,
     n_best_size=30, max_answer_length=50,
-    max_seq_length=384, doc_stride=128
+    max_seq_length=512, doc_stride=128
 ):
     feats = _prepare(tokenizer, question, context, max_seq_length, doc_stride)
     input_ids = torch.tensor(feats["input_ids"]).to(device)
