@@ -40,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-MODEL_DIR     = "Model/qa_gelectra_v2"
+MODEL_DIR     = "Arrmend/qa-gelectra-germansquad"
 DATASET_SPLIT = "test"
 
 # Feste Werte (nicht mehr über Sidebar verstellbar)

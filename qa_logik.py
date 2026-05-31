@@ -1,4 +1,4 @@
-# qa_inference.py
+# qa_logik.py
 import numpy as np
 import torch
 from transformers import AutoTokenizer, AutoModelForQuestionAnswering
@@ -46,20 +46,22 @@ def predict_gold_base_post(
     s_logits = out.start_logits.cpu().numpy()
     e_logits = out.end_logits.cpu().numpy()
 
-    # BASE: Top-1 Span
+    # BASE: Top-1 Span (argmax)
     base = {"score": -1e9, "text": ""}
     for c in range(s_logits.shape[0]):
         offs = feats["offset_mapping"][c]
         s = int(np.argmax(s_logits[c]))
         e = int(np.argmax(e_logits[c]))
-        if e < s or (e - s + 1) > max_answer_length: continue
-        if offs[s] is None or offs[e] is None: continue
+        if e < s or (e - s + 1) > max_answer_length:
+            continue
+        if offs[s] is None or offs[e] is None:
+            continue
         a, b = offs[s][0], offs[e][1]
         sc = float(s_logits[c][s] + e_logits[c][e])
         if sc > base["score"]:
             base = {"score": sc, "text": context[a:b]}
 
-    # POST: n-best
+    # POST: n-best Span
     post = {"score": -1e9, "text": ""}
     for c in range(s_logits.shape[0]):
         offs = feats["offset_mapping"][c]
@@ -67,49 +69,14 @@ def predict_gold_base_post(
         ee = np.argsort(e_logits[c])[-n_best_size:][::-1]
         for s in ss:
             for e in ee:
-                if e < s or (e - s + 1) > max_answer_length: continue
-                if offs[int(s)] is None or offs[int(e)] is None: continue
+                if e < s or (e - s + 1) > max_answer_length:
+                    continue
+                if offs[int(s)] is None or offs[int(e)] is None:
+                    continue
                 a, b = offs[int(s)][0], offs[int(e)][1]
                 sc = float(s_logits[c][int(s)] + e_logits[c][int(e)])
                 if sc > post["score"]:
                     post = {"score": sc, "text": context[a:b]}
-        # ... (bestehender Code in qa_logik.py bis hierhin)
-
-        # Sammle n-best Kandidaten für die Visualisierung
-        n_best_candidates = []
-        # Hier müsstest du eine Logik entwickeln, die die Top-N Scores und Texte speichert.
-        # Für den Anfang können wir eine vereinfachte Liste der Top-Scores nutzen.
-        # Dies ist ein *sehr* vereinfachtes Beispiel, um die Struktur zu zeigen.
-        # Eine vollständige n-best Implementierung ist komplexer und würde in _prepare / predict geschehen.
-
-        # Vereinfachte Annahme für Demo: wir nehmen die Top 5 Logit-Scores nach der POST-Berechnung
-        # Dies ist NICHT eine vollständige n-best Sammlung, sondern ein Beispiel für die Visualisierung.
-
-        all_scores = []
-        for c in range(s_logits.shape[0]):
-            offs = feats["offset_mapping"][c]
-            for s in np.argsort(s_logits[c])[-n_best_size:][::-1]:  # Top n_best_size Start-Logits
-                for e in np.argsort(e_logits[c])[-n_best_size:][::-1]:  # Top n_best_size End-Logits
-                    if e < s or (e - s + 1) > max_answer_length: continue
-                    if offs[int(s)] is None or offs[int(e)] is None: continue
-                    # Optional: Filterung nach Plausibilität hier, z.B. nur wenn Score > Schwelle
-
-                    score = float(s_logits[c][int(s)] + e_logits[c][int(e)])
-                    text = context[offs[int(s)][0]:offs[int(e)][1]]
-                    all_scores.append({"score": score, "text": text})
-
-        # Sortiere alle gefundenen Spannen nach Score und nimm die Top N für die Visualisierung
-        all_scores = sorted(all_scores, key=lambda x: x["score"], reverse=True)[:5]  # Top 5 für Diagramm
-
-        return {
-            "gold": gold_text,
-            "base": base["text"],
-            "post": post["text"],
-            "base_score": base["score"],
-            "post_score": post["score"],
-            "n_best_scores": [item['score'] for item in all_scores],  # Füge diese Zeile hinzu
-            "n_best_texts": [item['text'] for item in all_scores]  # Füge diese Zeile hinzu
-        }
 
     return {
         "gold": gold_text,
