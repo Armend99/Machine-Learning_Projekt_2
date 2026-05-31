@@ -19,7 +19,7 @@ st.set_page_config(page_title="Projekt: Machine Learning", layout="wide")
 # -----------------------------
 # Assets
 # -----------------------------
-HERO_PATH = "assets/Bild_1.jpg"
+HERO_PATH = "Assets/Bild_1.jpg"
 HERO_DATA_URI = img_to_data_uri(HERO_PATH)
 INFO_BG_PATH = "Assets/2_Bild.jpeg"
 INFO_BG_URI  = img_to_data_uri(INFO_BG_PATH)
@@ -231,7 +231,7 @@ with c3:
     st.markdown('<div class="wix-text">Das Modell schätzt pro Token die Wahrscheinlichkeit für Start/Ende der Antwort. Postprocessing (n-best) wählt daraus die plausibelste Spanne.</div>', unsafe_allow_html=True)
     st.markdown('<div class="wix-btn-wrap">', unsafe_allow_html=True)
     if st.button("Mehr Infos", key="more_principle"):
-        st.switch_page("pages/3_Mehr_Infos.py")
+        st.switch_page("Pages/3_Mehr_Infos.py")
     st.markdown('</div></div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -287,4 +287,4 @@ st.write("<div style='text-align:center;'>In der Demo kannst du fünf zufällige
 cc1, cc2, cc3 = st.columns([1, 1, 1])
 with cc2:
     if st.button("Zur Demo →", use_container_width=False):
-        st.switch_page("pages/1_Fragen_generieren.py")
+        st.switch_page("Pages/1_Fragen_generieren.py")
